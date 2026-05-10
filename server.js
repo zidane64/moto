@@ -48,7 +48,7 @@ let isDatabaseConnected = false;
 const transporter = nodemailer.createTransport({
     host:   process.env.SMTP_HOST || 'smtp.gmail.com',
     port:   parseInt(process.env.SMTP_PORT) || 587,
-    secure: false, // true untuk port 465, false untuk 587
+    secure: parseInt(process.env.SMTP_PORT) === 465, // true untuk port 465 (SSL), false untuk 587 (STARTTLS)
     auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASSWORD,
@@ -58,15 +58,11 @@ const transporter = nodemailer.createTransport({
     },
 });
 
-// Verifikasi koneksi SMTP saat startup (opsional, tidak blokir server)
-transporter.verify((error) => {
-    if (error) {
-        console.warn('[WARN] SMTP tidak terhubung:', error.message);
-        console.warn('[WARN] Fitur email tidak akan berfungsi. Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD di environment.');
-    } else {
-        console.log('[OK] SMTP siap mengirim email');
-    }
-});
+// SMTP tidak diverifikasi saat startup untuk menghindari delay/timeout.
+// Error akan muncul hanya saat email benar-benar dikirim.
+if (!process.env.SMTP_USER || !process.env.SMTP_PASSWORD) {
+    console.warn('[WARN] SMTP_USER / SMTP_PASSWORD belum diset. Fitur email tidak aktif.');
+}
 
 // ==================== UTILITY EMAIL ====================
 
