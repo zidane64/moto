@@ -47,8 +47,8 @@ let isDatabaseConnected = false;
  */
 const transporter = nodemailer.createTransport({
     host:   process.env.SMTP_HOST || 'smtp.gmail.com',
-    port:   parseInt(process.env.SMTP_PORT) || 465,
-    secure: true, // true untuk port 465, false untuk 587
+    port:   parseInt(process.env.SMTP_PORT) || 587,
+    secure: false, // true untuk port 465, false untuk 587
     auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASSWORD,
@@ -664,22 +664,46 @@ async function createTables() {
 }
 
 async function syncWorkshopsToDatabase() {
-    console.log('[INFO] Sinkronisasi data bengkel ke database...');
-    await pool.query('DELETE FROM workshop_services');
-    await pool.query('DELETE FROM workshop_parts');
-    await pool.query('DELETE FROM workshops');
-
-    for (const w of GENERATED_WORKSHOPS) {
-        await pool.query(
-            `INSERT INTO workshops (id,name,brand,address,phone,wa,distance,rating,reviews,status,hours,verified,lat,lng,is_active)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,TRUE)`,
-            [w.id, w.name, w.brand, w.address, w.phone, w.wa, w.distance, w.rating, w.reviews, w.status, w.hours, w.verified, w.lat, w.lng]
-        );
-        if (w.services.length > 0)
-            await pool.query('INSERT INTO workshop_services (workshop_id,name,price) VALUES ?', [w.services.map(s => [w.id, s.name, s.price])]);
-        if (w.parts.length > 0)
-            await pool.query('INSERT INTO workshop_parts (workshop_id,name,price) VALUES ?', [w.parts.map(p => [w.id, p.name, p.price])]);
+    // Cek apakah bengkel generated sudah ada — skip sync jika sudah ada
+    // Ini mencegah DELETE+INSERT ulang setiap restart (penyebab SIGTERM timeout)
+    const [existing] = await pool.query(
+        'SELECT COUNT(*) as total FROM workshops WHERE owner_id IS NULL'
+    );
+    if (existing[0].total >= GENERATED_WORKSHOPS.length) {
+        console.log(`[OK] Data bengkel sudah ada (${existing[0].total} records), skip sinkronisasi`);
+        return;
     }
+
+    console.log('[INFO] Sinkronisasi data bengkel ke database (pertama kali)...');
+
+    // Hapus hanya bengkel generated (bukan bengkel yang didaftarkan owner)
+    await pool.query('DELETE ws FROM workshop_services ws JOIN workshops w ON ws.workshop_id = w.id WHERE w.owner_id IS NULL');
+    await pool.query('DELETE wp FROM workshop_parts wp JOIN workshops w ON wp.workshop_id = w.id WHERE w.owner_id IS NULL');
+    await pool.query('DELETE FROM workshops WHERE owner_id IS NULL');
+
+    // Bulk insert semua workshop sekaligus (1 query, jauh lebih cepat)
+    const workshopRows = GENERATED_WORKSHOPS.map(w => [
+        w.id, w.name, w.brand, w.address, w.phone, w.wa,
+        w.distance, w.rating, w.reviews, w.status, w.hours,
+        w.verified, w.lat, w.lng
+    ]);
+    await pool.query(
+        `INSERT INTO workshops (id,name,brand,address,phone,wa,distance,rating,reviews,status,hours,verified,lat,lng,is_active) VALUES ?`,
+        [workshopRows]
+    );
+
+    // Bulk insert semua services sekaligus
+    const allServices = [];
+    const allParts    = [];
+    for (const w of GENERATED_WORKSHOPS) {
+        for (const s of w.services) allServices.push([w.id, s.name, s.price]);
+        for (const p of w.parts)    allParts.push([w.id, p.name, p.price]);
+    }
+    if (allServices.length > 0)
+        await pool.query('INSERT INTO workshop_services (workshop_id,name,price) VALUES ?', [allServices]);
+    if (allParts.length > 0)
+        await pool.query('INSERT INTO workshop_parts (workshop_id,name,price) VALUES ?', [allParts]);
+
     console.log(`[OK] ${GENERATED_WORKSHOPS.length} bengkel berhasil disimpan ke database`);
 }
 
@@ -1820,9 +1844,12 @@ app.get('/api/chat/unread-count', workshopAuth, async (req, res) => {
 
 // ==================== START SERVER ====================
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, '0.0.0.0', async () => {
+
+// Server listen DULU agar platform tidak timeout, lalu init DB di background
+server.listen(PORT, '0.0.0.0', () => {
     console.log(`[START] MotoCare API v4.0 berjalan di port ${PORT}`);
     console.log('[INFO] Socket.io aktif untuk chat realtime');
     console.log('[INFO] Fitur email verifikasi: AKTIF');
-    await initDatabase();
+    // Jalankan initDatabase di background, tidak blokir server
+    initDatabase().catch(err => console.error('[ERROR] initDatabase gagal:', err.message));
 });
