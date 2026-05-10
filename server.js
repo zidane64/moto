@@ -923,6 +923,41 @@ app.get('/api/motorcycles-master', async (req, res) => {
     } catch { res.json({ data: MASTER_MOTORCYCLES }); }
 });
 
+// ==================== ENDPOINT UNTUK MENGAMBIL DATA PROFIL USER ====================
+// Endpoint ini akan merespon URL yang dicari frontend: /api/profile, /api/me, /api/auth/profile
+app.get('/api/profile', auth, async (req, res) => {
+    // Fungsi auth di middleware akan memastikan hanya user yang login yang bisa mengakses
+    if (!pool) return res.status(503).json({ message: 'Database tidak tersedia' });
+
+    try {
+        // Ambil data user dari database berdasarkan ID yang sudah terekstrak di middleware auth (req.userId)
+        const [rows] = await pool.query(
+            'SELECT id, name, email, role, is_verified, created_at FROM users WHERE id = ?',
+            [req.userId]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'User tidak ditemukan' });
+        }
+
+        // Kirim data user sebagai response. Frontend mengharapkan properti 'user' di dalam respons.
+        res.json({ user: rows[0] });
+    } catch (error) {
+        console.error('[ERROR] Gagal mengambil profil:', error.message);
+        res.status(500).json({ message: 'Terjadi kesalahan pada server' });
+    }
+});
+
+// Anda juga bisa menambahkan alias untuk endpoint /me agar lebih kompatibel
+app.get('/api/me', auth, async (req, res) => {
+    // Arahkan saja ke logika yang sama
+    const profileRes = await fetch(`${req.protocol}://${req.get('host')}/api/profile`, {
+        headers: { 'Authorization': req.headers.authorization }
+    });
+    const profileData = await profileRes.json();
+    res.status(profileRes.status).json(profileData);
+});
+
 // ============================================================
 //  AUTH — REGISTRASI & VERIFIKASI EMAIL
 // ============================================================
