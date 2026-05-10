@@ -7,7 +7,20 @@ const mysql      = require('mysql2/promise');
 const cors       = require('cors');
 const jwt        = require('jsonwebtoken');
 const bcrypt     = require('bcryptjs');
-const nodemailer = require('nodemailer');
+
+// ==================== [SENDGRID] GANTI NODEMAILER ====================
+// Hapus: const nodemailer = require('nodemailer');
+// Install dulu: npm install @sendgrid/mail
+const sgMail = require('@sendgrid/mail');
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+if (!process.env.SENDGRID_API_KEY) {
+    console.warn('[WARN] SENDGRID_API_KEY belum diset. Fitur email tidak aktif.');
+}
+if (!process.env.FROM_EMAIL) {
+    console.warn('[WARN] FROM_EMAIL belum diset. Gunakan email yang sudah diverifikasi di SendGrid.');
+}
+// =====================================================================
 
 const app    = express();
 const server = http.createServer(app);
@@ -37,34 +50,6 @@ const TOTAL_WORKSHOPS = 150;
 let pool               = null;
 let isDatabaseConnected = false;
 
-// ==================== KONFIGURASI NODEMAILER ====================
-/**
- * Transporter Nodemailer untuk kirim email.
- * Set environment variables:
- *   SMTP_HOST     = smtp.gmail.com
- *   SMTP_PORT     = 587
- *   SMTP_USER     = your_email@gmail.com
- *   SMTP_PASSWORD = your_app_password (bukan password Gmail biasa, gunakan App Password)
- */
-const transporter = nodemailer.createTransport({
-    host:   process.env.SMTP_HOST || 'smtp.gmail.com',
-    port:   parseInt(process.env.SMTP_PORT) || 587,
-    secure: parseInt(process.env.SMTP_PORT) === 465, // true untuk port 465 (SSL), false untuk 587 (STARTTLS)
-    auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASSWORD,
-    },
-    tls: {
-        rejectUnauthorized: false,
-    },
-});
-
-// SMTP tidak diverifikasi saat startup untuk menghindari delay/timeout.
-// Error akan muncul hanya saat email benar-benar dikirim.
-if (!process.env.SMTP_USER || !process.env.SMTP_PASSWORD) {
-    console.warn('[WARN] SMTP_USER / SMTP_PASSWORD belum diset. Fitur email tidak aktif.');
-}
-
 // ==================== UTILITY EMAIL ====================
 
 /**
@@ -90,8 +75,10 @@ const generateVerificationJWT = (email, type = 'verify') => {
     return jwt.sign({ email, type }, SECRET_KEY, { expiresIn: '24h' });
 };
 
+// ==================== [SENDGRID] FUNGSI PENGIRIM EMAIL ====================
+
 /**
- * Kirim email verifikasi ke user baru
+ * Kirim email verifikasi ke user baru via SendGrid
  * @param {string} email - Alamat email tujuan
  * @param {string} token - Token 6 digit
  * @param {string} name  - Nama user
@@ -99,9 +86,9 @@ const generateVerificationJWT = (email, type = 'verify') => {
 const sendVerificationEmail = async (email, token, name) => {
     const verificationLink = `${FRONTEND_URL}/verify-email?token=${token}&email=${encodeURIComponent(email)}`;
 
-    const mailOptions = {
-        from:    `"MotoCare" <${process.env.SMTP_USER}>`,
+    const msg = {
         to:      email,
+        from:    process.env.FROM_EMAIL || 'noreply@motocare.com', // Harus sudah diverifikasi di SendGrid
         subject: 'Verifikasi Email MotoCare',
         html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -136,11 +123,17 @@ const sendVerificationEmail = async (email, token, name) => {
         `,
     };
 
-    await transporter.sendMail(mailOptions);
+    try {
+        await sgMail.send(msg);
+        console.log(`[INFO] Email verifikasi terkirim ke: ${email}`);
+    } catch (error) {
+        console.error('[ERROR] Gagal kirim email verifikasi:', error.response?.body || error.message);
+        throw error;
+    }
 };
 
 /**
- * Kirim email reset password
+ * Kirim email reset password via SendGrid
  * @param {string} email - Alamat email tujuan
  * @param {string} token - Token 6 digit
  * @param {string} name  - Nama user
@@ -148,9 +141,9 @@ const sendVerificationEmail = async (email, token, name) => {
 const sendResetPasswordEmail = async (email, token, name) => {
     const resetLink = `${FRONTEND_URL}/reset-password?token=${token}&email=${encodeURIComponent(email)}`;
 
-    const mailOptions = {
-        from:    `"MotoCare" <${process.env.SMTP_USER}>`,
+    const msg = {
         to:      email,
+        from:    process.env.FROM_EMAIL || 'noreply@motocare.com',
         subject: 'Reset Password MotoCare',
         html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -190,19 +183,26 @@ const sendResetPasswordEmail = async (email, token, name) => {
         `,
     };
 
-    await transporter.sendMail(mailOptions);
+    try {
+        await sgMail.send(msg);
+        console.log(`[INFO] Email reset password terkirim ke: ${email}`);
+    } catch (error) {
+        console.error('[ERROR] Gagal kirim email reset password:', error.response?.body || error.message);
+        throw error;
+    }
 };
 
 /**
- * Kirim email notifikasi verifikasi bengkel (opsional — ke admin)
+ * Kirim notifikasi email pendaftaran bengkel ke admin platform via SendGrid
  * @param {string} adminEmail - Email admin platform
  * @param {object} data       - Data bengkel yang mendaftar
  */
 const sendWorkshopRegistrationNotif = async (adminEmail, data) => {
     if (!adminEmail) return;
-    const mailOptions = {
-        from:    `"MotoCare System" <${process.env.SMTP_USER}>`,
+
+    const msg = {
         to:      adminEmail,
+        from:    process.env.FROM_EMAIL || 'noreply@motocare.com',
         subject: `[MotoCare] Pendaftaran Bengkel Baru: ${data.workshop_name}`,
         html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -218,8 +218,17 @@ const sendWorkshopRegistrationNotif = async (adminEmail, data) => {
             </div>
         `,
     };
-    await transporter.sendMail(mailOptions);
+
+    try {
+        await sgMail.send(msg);
+        console.log(`[INFO] Notifikasi bengkel baru terkirim ke admin: ${adminEmail}`);
+    } catch (error) {
+        console.error('[ERROR] Gagal kirim notifikasi admin:', error.response?.body || error.message);
+        throw error;
+    }
 };
+
+// =========================================================================
 
 // ==================== DATA MASTER MOTOR ====================
 const MASTER_MOTORCYCLES = [
@@ -483,7 +492,6 @@ async function initDatabase() {
 
 async function createTables() {
     const queries = [
-        // --- Tabel users (dengan kolom verifikasi email) ---
         `CREATE TABLE IF NOT EXISTS users (
             id INT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR(100) NOT NULL,
@@ -498,10 +506,6 @@ async function createTables() {
             reset_password_expires TIMESTAMP NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )`,
-
-        // Migrasi: tambah kolom verifikasi ke tabel users yang sudah ada
-        // (MySQL akan error jika kolom sudah ada, ditangani di bawah)
-
         `CREATE TABLE IF NOT EXISTS master_motorcycles (
             id INT AUTO_INCREMENT PRIMARY KEY,
             brand VARCHAR(50) NOT NULL,
@@ -574,7 +578,6 @@ async function createTables() {
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )`,
-        // --- Tabel onboarding bengkel ---
         `CREATE TABLE IF NOT EXISTS workshop_admins (
             id          INT AUTO_INCREMENT PRIMARY KEY,
             user_id     INT NOT NULL,
@@ -604,7 +607,6 @@ async function createTables() {
             reviewed_at         TIMESTAMP NULL,
             FOREIGN KEY (workshop_admin_id) REFERENCES workshop_admins(id) ON DELETE CASCADE
         )`,
-        // --- Tabel chat ---
         `CREATE TABLE IF NOT EXISTS chat_rooms (
             id          INT AUTO_INCREMENT PRIMARY KEY,
             user_id     INT NOT NULL,
@@ -626,7 +628,6 @@ async function createTables() {
             created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (room_id) REFERENCES chat_rooms(id) ON DELETE CASCADE
         )`,
-        // --- Tabel log email (opsional, untuk tracking pengiriman email) ---
         `CREATE TABLE IF NOT EXISTS email_logs (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             recipient_email VARCHAR(100),
@@ -644,7 +645,6 @@ async function createTables() {
         }
     }
 
-    // Migrasi kolom verifikasi ke tabel users yang sudah ada (idempotent)
     const migrationColumns = [
         'ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE',
         'ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token VARCHAR(255) NULL',
@@ -661,8 +661,6 @@ async function createTables() {
 }
 
 async function syncWorkshopsToDatabase() {
-    // Cek apakah bengkel generated sudah ada — skip sync jika sudah ada
-    // Ini mencegah DELETE+INSERT ulang setiap restart (penyebab SIGTERM timeout)
     const [existing] = await pool.query(
         'SELECT COUNT(*) as total FROM workshops WHERE owner_id IS NULL'
     );
@@ -673,12 +671,10 @@ async function syncWorkshopsToDatabase() {
 
     console.log('[INFO] Sinkronisasi data bengkel ke database (pertama kali)...');
 
-    // Hapus hanya bengkel generated (bukan bengkel yang didaftarkan owner)
     await pool.query('DELETE ws FROM workshop_services ws JOIN workshops w ON ws.workshop_id = w.id WHERE w.owner_id IS NULL');
     await pool.query('DELETE wp FROM workshop_parts wp JOIN workshops w ON wp.workshop_id = w.id WHERE w.owner_id IS NULL');
     await pool.query('DELETE FROM workshops WHERE owner_id IS NULL');
 
-    // Bulk insert semua workshop sekaligus (1 query, jauh lebih cepat)
     const workshopRows = GENERATED_WORKSHOPS.map(w => [
         w.id, w.name, w.brand, w.address, w.phone, w.wa,
         w.distance, w.rating, w.reviews, w.status, w.hours,
@@ -689,7 +685,6 @@ async function syncWorkshopsToDatabase() {
         [workshopRows]
     );
 
-    // Bulk insert semua services sekaligus
     const allServices = [];
     const allParts    = [];
     for (const w of GENERATED_WORKSHOPS) {
@@ -713,9 +708,6 @@ async function insertMasterMotorcycles() {
 
 // ==================== HELPER ====================
 
-/**
- * Buat notifikasi in-app untuk user
- */
 async function createInAppNotification(userId, title, message, type = 'chat') {
     if (!pool) return;
     try {
@@ -726,9 +718,6 @@ async function createInAppNotification(userId, title, message, type = 'chat') {
     } catch (e) { console.error('[WARN] Notifikasi gagal:', e.message); }
 }
 
-/**
- * Log pengiriman email ke tabel email_logs
- */
 async function logEmail(recipientEmail, type, status = 'sent') {
     if (!pool) return;
     try {
@@ -758,7 +747,6 @@ const adminOnly = (req, res, next) => {
     next();
 };
 
-// Middleware bengkel: bisa user biasa ATAU workshop_admin
 const workshopAuth = async (req, res, next) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ message: 'Token tidak ditemukan' });
@@ -910,11 +898,12 @@ io.on('connection', async (socket) => {
 app.get('/', (req, res) => {
     res.json({
         message:     'MotoCare Backend API',
-        version:     '4.0.0',
+        version:     '4.1.0', // [SENDGRID] bump versi
         database:    isDatabaseConnected ? 'connected' : 'disconnected',
         workshops:   GENERATED_WORKSHOPS.length,
         motorcycles: MASTER_MOTORCYCLES.length,
         features:    ['auth','email-verification','password-reset','motorcycles','workshops','estimator','history','notifications','chat','onboarding'],
+        emailProvider: 'SendGrid', // [SENDGRID] info provider
     });
 });
 
@@ -922,7 +911,6 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', database: isDatabaseConnected ? 'connected' : 'disconnected', onlineUsers: onlineUsers.size });
 });
 
-// Alias health check untuk platform (Railway, Render, Fly.io, dll)
 app.get('/healthz', (req, res) => res.json({ status: 'ok' }));
 app.get('/health',  (req, res) => res.json({ status: 'ok' }));
 
@@ -939,12 +927,6 @@ app.get('/api/motorcycles-master', async (req, res) => {
 //  AUTH — REGISTRASI & VERIFIKASI EMAIL
 // ============================================================
 
-/**
- * POST /api/auth/register
- * Registrasi user baru.
- * Setelah registrasi, email verifikasi dikirim ke email user.
- * User TIDAK bisa login sebelum email diverifikasi.
- */
 app.post('/api/auth/register', async (req, res) => {
     const { name, email, password } = req.body;
     if (!name || !email || !password)
@@ -957,7 +939,7 @@ app.post('/api/auth/register', async (req, res) => {
 
     try {
         const verificationToken   = generateVerificationToken();
-        const tokenExpires        = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 jam
+        const tokenExpires        = new Date(Date.now() + 24 * 60 * 60 * 1000);
         const hashed              = await bcrypt.hash(password, 10);
 
         const [result] = await pool.query(
@@ -966,15 +948,14 @@ app.post('/api/auth/register', async (req, res) => {
             [name, email, hashed, verificationToken, tokenExpires]
         );
 
-        // Kirim email verifikasi (tidak blokir response jika gagal)
+        // [SENDGRID] Kirim email via SendGrid
         let emailSent = false;
         try {
             await sendVerificationEmail(email, verificationToken, name);
             await logEmail(email, 'verification', 'sent');
             emailSent = true;
-            console.log(`[INFO] Email verifikasi dikirim ke: ${email}`);
         } catch (emailErr) {
-            console.error('[ERROR] Gagal kirim email verifikasi:', emailErr.message);
+            console.error('[ERROR] Gagal kirim email verifikasi:', emailErr.response?.body || emailErr.message);
             await logEmail(email, 'verification', 'failed');
         }
 
@@ -992,11 +973,6 @@ app.post('/api/auth/register', async (req, res) => {
     }
 });
 
-/**
- * POST /api/auth/verify-email
- * Verifikasi email menggunakan kode 6 digit.
- * Body: { email, token }
- */
 app.post('/api/auth/verify-email', async (req, res) => {
     const { email, token } = req.body;
     if (!email || !token)
@@ -1017,14 +993,12 @@ app.post('/api/auth/verify-email', async (req, res) => {
         if (user.is_verified)
             return res.status(400).json({ message: 'Email sudah terverifikasi sebelumnya' });
 
-        // Cek apakah token sudah kadaluarsa
         if (user.verification_token_expires && new Date() > new Date(user.verification_token_expires))
             return res.status(400).json({
                 message: 'Token verifikasi sudah kadaluarsa. Silakan kirim ulang kode verifikasi.',
                 expired: true,
             });
 
-        // Update status verifikasi
         await pool.query(
             `UPDATE users
              SET is_verified = TRUE, email_verified_at = NOW(),
@@ -1033,7 +1007,6 @@ app.post('/api/auth/verify-email', async (req, res) => {
             [user.id]
         );
 
-        // Kirim notifikasi in-app selamat datang
         await createInAppNotification(user.id, 'Selamat Datang di MotoCare! 🎉', 'Email Anda telah berhasil diverifikasi. Mulai gunakan fitur lengkap MotoCare sekarang!', 'system');
 
         res.json({ message: 'Email berhasil diverifikasi! Silakan login.' });
@@ -1043,11 +1016,6 @@ app.post('/api/auth/verify-email', async (req, res) => {
     }
 });
 
-/**
- * GET /api/auth/verify-email?token=xxx&email=xxx
- * Verifikasi via link di email (untuk klik dari browser).
- * Redirect ke halaman sukses di frontend.
- */
 app.get('/api/auth/verify-email', async (req, res) => {
     const { token, email } = req.query;
     if (!token || !email)
@@ -1089,11 +1057,6 @@ app.get('/api/auth/verify-email', async (req, res) => {
     }
 });
 
-/**
- * POST /api/auth/resend-verification
- * Kirim ulang kode verifikasi email.
- * Body: { email }
- */
 app.post('/api/auth/resend-verification', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ message: 'Email harus diisi' });
@@ -1111,21 +1074,21 @@ app.post('/api/auth/resend-verification', async (req, res) => {
         if (user.is_verified)
             return res.status(400).json({ message: 'Email sudah terverifikasi. Silakan login.' });
 
-        // Generate token baru
         const verificationToken = generateVerificationToken();
-        const tokenExpires      = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 jam
+        const tokenExpires      = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
         await pool.query(
             'UPDATE users SET verification_token = ?, verification_token_expires = ? WHERE id = ?',
             [verificationToken, tokenExpires, user.id]
         );
 
+        // [SENDGRID] Kirim ulang via SendGrid
         try {
             await sendVerificationEmail(email, verificationToken, user.name);
             await logEmail(email, 'verification', 'sent');
             res.json({ message: 'Kode verifikasi baru telah dikirim ke email Anda.' });
         } catch (emailErr) {
-            console.error('[ERROR] Kirim ulang email:', emailErr.message);
+            console.error('[ERROR] Kirim ulang email:', emailErr.response?.body || emailErr.message);
             await logEmail(email, 'verification', 'failed');
             res.status(500).json({ message: 'Gagal mengirim email. Pastikan alamat email Anda benar.' });
         }
@@ -1135,11 +1098,6 @@ app.post('/api/auth/resend-verification', async (req, res) => {
     }
 });
 
-/**
- * POST /api/auth/forgot-password
- * Kirim email reset password.
- * Body: { email }
- */
 app.post('/api/auth/forgot-password', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ message: 'Email harus diisi' });
@@ -1149,26 +1107,25 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     try {
         const [rows] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
 
-        // Selalu response sukses untuk keamanan (tidak bocorkan apakah email terdaftar)
         if (rows.length === 0) {
             return res.json({ message: 'Jika email Anda terdaftar, link reset password akan dikirim.' });
         }
 
         const user         = rows[0];
         const resetToken   = generateVerificationToken();
-        const resetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 jam
+        const resetExpires = new Date(Date.now() + 60 * 60 * 1000);
 
         await pool.query(
             'UPDATE users SET reset_password_token = ?, reset_password_expires = ? WHERE id = ?',
             [resetToken, resetExpires, user.id]
         );
 
+        // [SENDGRID] Kirim email reset via SendGrid
         try {
             await sendResetPasswordEmail(email, resetToken, user.name);
             await logEmail(email, 'reset_password', 'sent');
-            console.log(`[INFO] Email reset password dikirim ke: ${email}`);
         } catch (emailErr) {
-            console.error('[ERROR] Kirim email reset password:', emailErr.message);
+            console.error('[ERROR] Kirim email reset password:', emailErr.response?.body || emailErr.message);
             await logEmail(email, 'reset_password', 'failed');
             return res.status(500).json({ message: 'Gagal mengirim email reset password. Coba lagi nanti.' });
         }
@@ -1180,11 +1137,6 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     }
 });
 
-/**
- * POST /api/auth/reset-password
- * Reset password menggunakan token dari email.
- * Body: { email, token, newPassword, confirmPassword }
- */
 app.post('/api/auth/reset-password', async (req, res) => {
     const { email, token, newPassword, confirmPassword } = req.body;
 
@@ -1207,7 +1159,6 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
         const user = rows[0];
 
-        // Cek kadaluarsa token
         if (user.reset_password_expires && new Date() > new Date(user.reset_password_expires))
             return res.status(400).json({
                 message: 'Token reset password sudah kadaluarsa. Silakan request ulang.',
@@ -1230,11 +1181,6 @@ app.post('/api/auth/reset-password', async (req, res) => {
     }
 });
 
-/**
- * GET /api/auth/verification-status
- * Cek status verifikasi email user yang sedang login.
- * Header: Authorization Bearer <token>
- */
 app.get('/api/auth/verification-status', auth, async (req, res) => {
     if (!pool) return res.status(503).json({ message: 'Database tidak tersedia' });
     try {
@@ -1254,11 +1200,6 @@ app.get('/api/auth/verification-status', auth, async (req, res) => {
     }
 });
 
-/**
- * POST /api/auth/login
- * Login user. Wajib email sudah diverifikasi.
- * Body: { email, password }
- */
 app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password)
@@ -1274,7 +1215,6 @@ app.post('/api/auth/login', async (req, res) => {
         if (!isValid)
             return res.status(401).json({ message: 'Email atau password salah' });
 
-        // ✅ Cek verifikasi email — user tidak bisa login sebelum verifikasi
         if (!rows[0].is_verified) {
             return res.status(401).json({
                 message:         'Email belum diverifikasi. Silakan cek email Anda.',
@@ -1283,7 +1223,6 @@ app.post('/api/auth/login', async (req, res) => {
             });
         }
 
-        // Cek apakah user adalah workshop admin
         let workshopInfo = null;
         const [wa] = await pool.query(
             'SELECT wa.*, w.name as workshop_name FROM workshop_admins wa LEFT JOIN workshops w ON wa.workshop_id = w.id WHERE wa.user_id = ?',
@@ -1435,12 +1374,6 @@ app.get('/api/analytics', auth, async (req, res) => {
 //  WORKSHOP ONBOARDING ENDPOINTS
 // ============================================================
 
-/**
- * POST /api/workshop/register
- * Pemilik bengkel mendaftar.
- * Setelah registrasi, email verifikasi dikirim ke pemilik bengkel.
- * Admin platform juga mendapat notifikasi (jika ADMIN_EMAIL di-set).
- */
 app.post('/api/workshop/register', async (req, res) => {
     if (!pool) return res.status(503).json({ message: 'Database tidak tersedia' });
     const {
@@ -1460,11 +1393,9 @@ app.post('/api/workshop/register', async (req, res) => {
     try {
         await conn.beginTransaction();
 
-        // Generate token verifikasi email
         const verificationToken = generateVerificationToken();
         const tokenExpires      = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-        // 1. Buat akun user baru (role: user), belum verified
         const hashed = await bcrypt.hash(password, 10);
         const [userResult] = await conn.query(
             `INSERT INTO users (name,email,password,role,is_verified,verification_token,verification_token_expires)
@@ -1473,14 +1404,12 @@ app.post('/api/workshop/register', async (req, res) => {
         );
         const userId = userResult.insertId;
 
-        // 2. Buat workshop_admins record (belum verified)
         const [waResult] = await conn.query(
             'INSERT INTO workshop_admins (user_id,full_name,phone,role,is_verified) VALUES (?,?,?,?,FALSE)',
             [userId, full_name, phone, 'owner']
         );
         const adminId = waResult.insertId;
 
-        // 3. Simpan data bengkel ke workshop_pending
         await conn.query(
             `INSERT INTO workshop_pending
              (workshop_admin_id,workshop_name,workshop_address,workshop_phone,workshop_wa,workshop_lat,workshop_lng,workshop_brand)
@@ -1491,7 +1420,7 @@ app.post('/api/workshop/register', async (req, res) => {
 
         await conn.commit();
 
-        // Kirim email verifikasi ke pemilik bengkel
+        // [SENDGRID] Kirim email verifikasi ke pemilik bengkel
         let emailSent = false;
         try {
             await sendVerificationEmail(email, verificationToken, full_name);
@@ -1499,11 +1428,11 @@ app.post('/api/workshop/register', async (req, res) => {
             emailSent = true;
             console.log(`[INFO] Email verifikasi bengkel dikirim ke: ${email}`);
         } catch (emailErr) {
-            console.error('[ERROR] Kirim email verifikasi bengkel:', emailErr.message);
+            console.error('[ERROR] Kirim email verifikasi bengkel:', emailErr.response?.body || emailErr.message);
             await logEmail(email, 'verification', 'failed');
         }
 
-        // Notifikasi ke admin platform (opsional)
+        // [SENDGRID] Notifikasi ke admin platform (opsional)
         try {
             const adminEmail = process.env.ADMIN_EMAIL;
             if (adminEmail) {
@@ -1525,7 +1454,6 @@ app.post('/api/workshop/register', async (req, res) => {
     } finally { conn.release(); }
 });
 
-// GET /api/workshop/my-workshop
 app.get('/api/workshop/my-workshop', workshopAuth, async (req, res) => {
     if (!pool) return res.status(503).json({ message: 'Database tidak tersedia' });
     if (!req.isWorkshopAdmin) return res.status(403).json({ message: 'Akun Anda belum terdaftar sebagai pemilik bengkel' });
@@ -1540,7 +1468,6 @@ app.get('/api/workshop/my-workshop', workshopAuth, async (req, res) => {
     } catch (err) { console.error('[ERROR] my-workshop:', err.message); res.status(500).json({ message: 'Terjadi kesalahan' }); }
 });
 
-// PUT /api/workshop/my-workshop
 app.put('/api/workshop/my-workshop', workshopAuth, async (req, res) => {
     if (!pool) return res.status(503).json({ message: 'Database tidak tersedia' });
     if (!req.isWorkshopAdmin) return res.status(403).json({ message: 'Akses ditolak' });
@@ -1554,7 +1481,6 @@ app.put('/api/workshop/my-workshop', workshopAuth, async (req, res) => {
     } catch (err) { console.error('[ERROR] update my-workshop:', err.message); res.status(500).json({ message: 'Terjadi kesalahan' }); }
 });
 
-// GET /api/workshop/dashboard
 app.get('/api/workshop/dashboard', workshopAuth, async (req, res) => {
     if (!pool) return res.status(503).json({ message: 'Database tidak tersedia' });
     if (!req.isWorkshopAdmin) return res.status(403).json({ message: 'Akses ditolak' });
@@ -1588,7 +1514,6 @@ app.get('/api/workshop/dashboard', workshopAuth, async (req, res) => {
     } catch (err) { console.error('[ERROR] dashboard:', err.message); res.status(500).json({ message: 'Terjadi kesalahan' }); }
 });
 
-// GET /api/workshop/analytics
 app.get('/api/workshop/analytics', workshopAuth, async (req, res) => {
     if (!pool) return res.status(503).json({ message: 'Database tidak tersedia' });
     if (!req.isWorkshopAdmin) return res.status(403).json({ message: 'Akses ditolak' });
@@ -1846,11 +1771,10 @@ app.get('/api/chat/unread-count', workshopAuth, async (req, res) => {
 // ==================== START SERVER ====================
 const PORT = process.env.PORT || 3000;
 
-// Server listen DULU agar platform tidak timeout, lalu init DB di background
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`[START] MotoCare API v4.0 berjalan di port ${PORT}`);
+    console.log(`[START] MotoCare API v4.1 berjalan di port ${PORT}`);
     console.log('[INFO] Socket.io aktif untuk chat realtime');
+    console.log('[INFO] Email provider: SendGrid');
     console.log('[INFO] Fitur email verifikasi: AKTIF');
-    // Jalankan initDatabase di background, tidak blokir server
     initDatabase().catch(err => console.error('[ERROR] initDatabase gagal:', err.message));
 });
