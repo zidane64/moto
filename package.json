@@ -1,37 +1,21 @@
 {
   "name": "motocare-backend",
   "version": "4.0.0",
-  "description": "MotoCare - Aplikasi Servis Motor ",
+  "description": "MotoCare Backend API",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.6.5",
+    "nodemailer": "^6.9.9",
+    "socket.io": "^4.7.4"
   },
   "engines": {
-    "node": "18.x"
-  },
-  "keywords": [
-    "motocare",
-    "motorcycle",
-    "service",
-    "reminder",
-    "notification",
-    "analytics",
-    "chat",
-    "email-verification"
-  ],
-  "author": "MotoCare Team",
-  "license": "MIT",
-  "dependencies": {
-    "express": "^4.18.2",
-    "mysql2": "^3.6.0",
-    "cors": "^2.8.5",
-    "jsonwebtoken": "^9.0.2",
-    "bcryptjs": "^2.4.3",
-    "socket.io": "^4.7.2",
-    "nodemailer": "^6.9.7"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
+    "node": ">=18.0.0"
   }
 }
