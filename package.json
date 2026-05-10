@@ -1,7 +1,7 @@
 {
   "name": "motocare-backend",
-  "version": "1.0.0",
-  "description": "MotoCare - Aplikasi Servis Motor dengan Notifikasi Push & Dashboard Analitik",
+  "version": "4.0.0",
+  "description": "MotoCare - Aplikasi Servis Motor ",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -16,7 +16,9 @@
     "service",
     "reminder",
     "notification",
-    "analytics"
+    "analytics",
+    "chat",
+    "email-verification"
   ],
   "author": "MotoCare Team",
   "license": "MIT",
@@ -25,7 +27,9 @@
     "mysql2": "^3.6.0",
     "cors": "^2.8.5",
     "jsonwebtoken": "^9.0.2",
-    "bcryptjs": "^2.4.3"
+    "bcryptjs": "^2.4.3",
+    "socket.io": "^4.7.2",
+    "nodemailer": "^6.9.7"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
