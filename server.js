@@ -47,8 +47,8 @@ let isDatabaseConnected = false;
  */
 const transporter = nodemailer.createTransport({
     host:   process.env.SMTP_HOST || 'smtp.gmail.com',
-    port:   parseInt(process.env.SMTP_PORT) || 587,
-    secure: false, // true untuk port 465, false untuk 587
+    port:   parseInt(process.env.SMTP_PORT) || 465,
+    secure: true, // true untuk port 465, false untuk 587
     auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASSWORD,
