@@ -26,7 +26,8 @@ const dbConfig = {
     ssl:              process.env.MYSQLSSL === 'true' ? { rejectUnauthorized: false } : false,
     waitForConnections: true,
     connectionLimit:  10,
-    connectTimeout:   30000,
+    acquireTimeout:   10000,
+    connectTimeout:   10000,
 };
 
 const SECRET_KEY      = process.env.SECRET_KEY || 'motocare_super_secret_key_2025';
@@ -920,6 +921,10 @@ app.get('/', (req, res) => {
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', database: isDatabaseConnected ? 'connected' : 'disconnected', onlineUsers: onlineUsers.size });
 });
+
+// Alias health check untuk platform (Railway, Render, Fly.io, dll)
+app.get('/healthz', (req, res) => res.json({ status: 'ok' }));
+app.get('/health',  (req, res) => res.json({ status: 'ok' }));
 
 // ── Master motorcycles ────────────────────────────────────────────
 app.get('/api/motorcycles-master', async (req, res) => {
